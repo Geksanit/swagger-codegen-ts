@@ -18,7 +18,7 @@ import { head, NonEmptyArray } from 'fp-ts/lib/NonEmptyArray';
 import { JSONPrimitive } from '../../../../utils/io-ts';
 import { pipe } from 'fp-ts/lib/pipeable';
 import { nonEmptyArray, option } from 'fp-ts';
-import { none, Option, some } from 'fp-ts/lib/Option';
+import { none, Option, some, exists } from 'fp-ts/lib/Option';
 import { utilsRef } from '../bundled/utils';
 import { Either } from 'fp-ts/lib/Either';
 import { combineEither } from '@devexperts/utils/dist/adt/either.utils';
@@ -68,6 +68,16 @@ export const SERIALIZED_UNKNOWN_TYPE = serializedType(
 	[serializedDependency('unknown', 'io-ts')],
 	[],
 );
+export const getSerializedBlobType = (from: Ref): Either<Error, SerializedType> => {
+	return combineEither(utilsRef, utilsRef =>
+		serializedType(
+			'Blob',
+			'BlobToBlobIO',
+			[serializedDependency('BlobToBlobIO', getRelativePath(from, utilsRef))],
+			[],
+		),
+	);
+};
 export const SERIALIZED_BOOLEAN_TYPE = serializedType(
 	'boolean',
 	'boolean',
@@ -109,8 +119,32 @@ export const getSerializedStringType = (from: Ref, format: Option<string>): Eith
 							),
 						);
 					}
+					case 'byte':
+					case 'base64': {
+						return some(
+							serializedType(
+								'Base64',
+								'Base64FromStringIO',
+								[
+									serializedDependency('Base64FromStringIO', getRelativePath(from, utilsRef)),
+									serializedDependency('Base64', getRelativePath(from, utilsRef)),
+								],
+								[],
+							),
+						);
+					}
 					case 'binary': {
-						return some(SERIALIZED_UNKNOWN_TYPE);
+						return some(
+							serializedType(
+								'Binary',
+								'BinaryFromStringIO',
+								[
+									serializedDependency('BinaryFromStringIO', getRelativePath(from, utilsRef)),
+									serializedDependency('Binary', getRelativePath(from, utilsRef)),
+								],
+								[],
+							),
+						);
 					}
 				}
 				return none;
@@ -123,12 +157,30 @@ export const SERIALIZED_NULL_TYPE = serializedType('null', 'nullType', [serializ
 export const getSerializedNullableType = (isNullable: boolean) => (type: SerializedType): SerializedType =>
 	isNullable ? getSerializedUnionType([type, SERIALIZED_NULL_TYPE]) : type;
 
-export const getSerializedArrayType = (name?: string) => (serialized: SerializedType): SerializedType =>
-	serializedType(
-		`Array<${serialized.type}>`,
-		`array(${serialized.io}${when(name !== undefined, `, '${name}'`)})`,
-		[...serialized.dependencies, serializedDependency('array', 'io-ts')],
-		serialized.refs,
+export const getSerializedArrayType = (minItems: Option<number>, name?: string) => (
+	serialized: SerializedType,
+): SerializedType =>
+	pipe(
+		minItems,
+		exists(minItems => minItems > 0),
+		isNonEmpty =>
+			isNonEmpty
+				? serializedType(
+						`NonEmptyArray<${serialized.type}>`,
+						`nonEmptyArray(${serialized.io}${when(name !== undefined, `, '${name}'`)})`,
+						[
+							...serialized.dependencies,
+							serializedDependency('nonEmptyArray', 'io-ts-types/lib/nonEmptyArray'),
+							serializedDependency('NonEmptyArray', 'fp-ts/lib/NonEmptyArray'),
+						],
+						serialized.refs,
+				  )
+				: serializedType(
+						`Array<${serialized.type}>`,
+						`array(${serialized.io}${when(name !== undefined, `, '${name}'`)})`,
+						[...serialized.dependencies, serializedDependency('array', 'io-ts')],
+						serialized.refs,
+				  ),
 	);
 
 export const getSerializedRefType = (from: Ref) => (to: Ref): SerializedType => {
